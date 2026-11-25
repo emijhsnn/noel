@@ -844,8 +844,9 @@ function auUnlock(){
     if(!AU.master){ AU.master=AU.ctx.createGain(); AU.master.gain.value=0; AU.master.connect(AU.ctx.destination); }
     AU.unlocked = true;
     if(window.speechSynthesis){ const u=new SpeechSynthesisUtterance(" "); u.volume=0; speechSynthesis.speak(u); }
-    ["noel","grinch"].forEach(k=>{ const a=new Audio(`music/${k}.mp3`); a.loop=true; a.preload="auto";
-      a.addEventListener("canplaythrough",()=>{ AU.files[k]=a; if(AU.mode===k) setMusic(k,true); },{once:true}); a.load(); });
+    preloadVoices();
+    ["noel","grinch"].forEach(k=>{ const tryExt=exts=>{ if(!exts.length) return; const a=new Audio(`music/${k}.${exts[0]}`); a.loop=true; a.preload="auto";
+      a.addEventListener("canplaythrough",()=>{ AU.files[k]=a; if(AU.mode===k) setMusic(k,true); },{once:true}); a.addEventListener("error",()=>tryExt(exts.slice(1)),{once:true}); a.load(); }; tryExt(["mp3","wav","m4a"]); });
   }catch(e){ console.warn(e); }
 }
 function blip(freq,t,dur,type,vol,dest,filt){
@@ -906,13 +907,24 @@ function loadVoices(){ if(window.speechSynthesis) VOICES=speechSynthesis.getVoic
 if(window.speechSynthesis){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
 function pickVoice(kind){
   const pref = kind==="grinch" ? ["Thomas","Daniel","Google français","Nicolas"] : kind==="santa" ? ["Thomas","Nicolas","Google français","Daniel"] : ["Amélie","Audrey","Marie","Google français","Thomas"];
+  const good=VOICES.filter(v=>/premium|enhanced|améliorée|amelioree|natural|neural/i.test(v.name));
+  for(const n of pref){ const v=good.find(v=>v.name.includes(n)); if(v) return v; }
+  if(good.length) return good[0];
   for(const n of pref){ const v=VOICES.find(v=>v.name.includes(n)); if(v) return v; }
   return VOICES[0]||null;
 }
 const cleanTxt = t => String(t||"").replace(/<[^>]+>/g," ").replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu,"").replace(/[«»]/g,"").replace(/\s+/g," ").trim();
-function say(text, kind="narr"){
-  const a=gst().audio||{}; if(a.voice===false || !AU.unlocked || !window.speechSynthesis) return;
-  speechSynthesis.cancel();
+const VOICE_IDS=["intro","roles","vote","doute","fin-sauve","fin-justesse","fin-grinch","test",...GAMES.flatMap((g,i)=>[`grinch-${i+1}`].concat(g.riddle?[`enigme-${i+1}`]:[]))];
+AU.voice={};
+function preloadVoices(){ VOICE_IDS.forEach(id=>{ const tryExt=exts=>{ if(!exts.length) return; const a=new Audio(`voix/${id}.${exts[0]}`); a.preload="auto";
+  a.addEventListener("canplaythrough",()=>{ AU.voice[id]=a; },{once:true}); a.addEventListener("error",()=>tryExt(exts.slice(1)),{once:true}); a.load(); }; tryExt(["mp3","wav","m4a"]); }); }
+function say(text, kind="narr", id=null){
+  const a=gst().audio||{}; if(a.voice===false || !AU.unlocked) return;
+  try{ window.speechSynthesis && speechSynthesis.cancel(); }catch(e){}
+  if(AU.cur){ AU.cur.pause(); AU.cur=null; }
+  if(id && AU.voice[id]){ const el=AU.voice[id]; el.currentTime=0; AU.cur=el; AU.speaking=true; setMusic(AU.mode);
+    el.onended=()=>{ AU.speaking=false; AU.cur=null; setMusic(AU.mode); }; el.play().catch(()=>{ AU.speaking=false; }); return; }
+  if(!window.speechSynthesis) return;
   const parts=cleanTxt(text).match(/[^.!?…]+[.!?…]*/g)||[]; if(!parts.length) return;
   parts.forEach((p,i)=>{ const u=new SpeechSynthesisUtterance(p.trim()); u.lang="fr-FR"; const v=pickVoice(kind); if(v) u.voice=v;
     if(kind==="grinch"){ u.pitch=0.2; u.rate=0.82; } else if(kind==="santa"){ u.pitch=0.55; u.rate=0.9; } else { u.pitch=1; u.rate=0.98; }
@@ -921,22 +933,22 @@ function say(text, kind="narr"){
     speechSynthesis.speak(u); });
 }
 function sceneSpeech(s, st){
-  if(s.k==="intro") return ["Message urgent du Pôle Nord. Chère famille, mes lutins ont intercepté un message du Grinch. Cette année, il a décidé de gâcher votre Noël. Pour ça, il a infiltré deux espions parmi vous. Ils sont assis à cette table. Ils rient avec vous. Ils mangent vos toasts. Si vous ne les démasquez pas avant le dessert, je serai obligé de rayer votre maison de ma tournée. Pour vous aider, mes lutins ont caché des indices dans une série d'épreuves. Gagnez-les, réfléchissez bien… et ne faites confiance à personne. Signé : le Père Noël. Ho ho ho !","santa"];
-  if(s.k==="roles") return ["Regardez vos téléphones… votre rôle vous attend.","narr"];
-  if(s.k==="grinch") return [GAMES[s.g].grinch+" Hé hé hé !","grinch"];
+  if(s.k==="intro") return ["Message urgent du Pôle Nord. Chère famille, mes lutins ont intercepté un message du Grinch. Cette année, il a décidé de gâcher votre Noël. Pour ça, il a infiltré deux espions parmi vous. Ils sont assis à cette table. Ils rient avec vous. Ils mangent vos toasts. Si vous ne les démasquez pas avant le dessert, je serai obligé de rayer votre maison de ma tournée. Pour vous aider, mes lutins ont caché des indices dans une série d'épreuves. Gagnez-les, réfléchissez bien… et ne faites confiance à personne. Signé : le Père Noël. Ho ho ho !","santa","intro"];
+  if(s.k==="roles") return ["Regardez vos téléphones… votre rôle vous attend.","narr","roles"];
+  if(s.k==="grinch") return [GAMES[s.g].grinch+" Hé hé hé !","grinch",`grinch-${s.g+1}`];
   if(s.k==="game"){ const g=GAMES[s.g], r=st.res?.[s.g];
-    if(r==="riddle") return ["L'énigme du Grinch ! "+g.riddle.q.replace(/\n+/g," . ").replace(/–/g,", "),"grinch"];
-    if(!r) return [`Épreuve ${s.g+1} : ${g.name}. ${g.rules}`+(st.theme&&g.theme?` Le thème est : ${st.theme}.`:""),"narr"];
+    if(r==="riddle") return ["L'énigme du Grinch ! "+g.riddle.q.replace(/\n+/g," . ").replace(/–/g,", "),"grinch",`enigme-${s.g+1}`];
+    if(!r && g.theme && st.theme) return [`Le thème est : ${st.theme} !`,"narr",null];
     return null; }
-  if(s.k==="vote") return ["L'heure du verdict a sonné. Sur vos téléphones, désignez les deux espions. Votre choix est définitif.","santa"];
+  if(s.k==="vote") return ["L'heure du verdict a sonné. Sur vos téléphones, désignez les deux espions. Votre choix est définitif.","santa","vote"];
   if(s.k==="reveal"){ const rv=st.reveal||0, acc=accused().map(nameOf), sp=spies(), found=sp.filter(x=>accused().includes(x.id)).length;
     if(rv===0) return [`La famille accuse… ${acc.join(" et ")}.`,"narr"];
-    if(rv===1) return ["Mais avez-vous vu juste ?","narr"];
+    if(rv===1) return ["Mais avez-vous vu juste ?","narr","doute"];
     if(rv===2) return [`Le premier espion du Grinch était… ${sp[0]?.name||""} !`,"narr"];
     if(rv===3) return [`Et le deuxième… ${sp[1]?.name||""} !`,"narr"];
-    if(rv>=4) return found===2?["Noël est sauvé ! Les espions sont démasqués. Le Père Noël passera bien chez vous cette nuit. Ho ho ho !","santa"]
-      : found===1?["Sauvés de justesse ! Un espion démasqué, mais l'autre vous a bien eus.","santa"]
-      : ["Le Grinch a gagné ! Mes espions vous ont roulés dans la farine. Mouahahaha !","grinch"]; }
+    if(rv>=4) return found===2?["Noël est sauvé ! Les espions sont démasqués. Le Père Noël passera bien chez vous cette nuit. Ho ho ho !","santa","fin-sauve"]
+      : found===1?["Sauvés de justesse ! Un espion démasqué, mais l'autre vous a bien eus.","santa","fin-justesse"]
+      : ["Le Grinch a gagné ! Mes espions vous ont roulés dans la farine. Mouahahaha !","grinch","fin-grinch"]; }
   return null;
 }
 function audioTick(s, st){
@@ -949,12 +961,12 @@ function audioTick(s, st){
   if(grinchPop) setTimeout(()=>audioTick(STEPS[step()],gst()),12500);
   /* voix : scène */
   const key=JSON.stringify([step(), st.res?.[s.g], st.theme, st.reveal, st.replay]);
-  if(S.sayKey!==key){ const first=S.sayKey===undefined; S.sayKey=key; const sp2=sceneSpeech(s,st); if(sp2 && (!first||true)) setTimeout(()=>say(sp2[0],sp2[1]),600); }
+  if(S.sayKey!==key){ const first=S.sayKey===undefined; S.sayKey=key; const sp2=sceneSpeech(s,st); if(sp2 && (!first||true)) setTimeout(()=>say(sp2[0],sp2[1],sp2[2]),600); }
   /* voix : popups */
   if(pp && pp.ts!==S.popSaid){ S.popSaid=pp.ts; if(Date.now()-pp.ts<60000) setTimeout(()=>say(`${pp.title}. ${pp.text}`, pp.kind==="grinch"?"grinch":"narr"),400); }
   if(st.soundTest && st.soundTest!==S.soundTest){ const first=S.soundTest===undefined; S.soundTest=st.soundTest;
-    if(!first || Date.now()-st.soundTest<15000){ const t=AU.ctx.currentTime+0.05; [72,76,79,84].forEach((m,i)=>blip(mtof(m),t+i*0.15,0.8,"triangle",0.3,AU.master)); setTimeout(()=>say("Test du son. Si vous m'entendez, tout fonctionne ! Ho ho ho !","santa"),900); } }
-  if(st.hush && st.hush!==S.hush){ S.hush=st.hush; try{ speechSynthesis.cancel(); }catch(e){} AU.speaking=false; setMusic(AU.mode); }
+    if(!first || Date.now()-st.soundTest<15000){ const t=AU.ctx.currentTime+0.05; [72,76,79,84].forEach((m,i)=>blip(mtof(m),t+i*0.15,0.8,"triangle",0.3,AU.master)); setTimeout(()=>say("Test du son. Si vous m'entendez, tout fonctionne ! Ho ho ho !","santa","test"),900); } }
+  if(st.hush && st.hush!==S.hush){ S.hush=st.hush; try{ speechSynthesis.cancel(); }catch(e){} if(AU.cur){ AU.cur.pause(); AU.cur=null; } AU.speaking=false; setMusic(AU.mode); }
 }
 
 /* ---------- animations ---------- */
