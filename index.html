@@ -403,7 +403,8 @@ regie(){
     if(b.dataset.au==="music") upd({"audio.music":a.music===false});
     if(b.dataset.au==="voice") upd({"audio.voice":a.voice===false});
     if(b.dataset.au==="replay") upd({replay:Date.now()});
-    if(b.dataset.au==="shh") upd({hush:Date.now()}); };
+    if(b.dataset.au==="shh") upd({hush:Date.now()});
+    if(b.dataset.au==="test") upd({soundTest:Date.now()}); };
   $("#audioctl").onchange = e => { if(e.target.id==="auvol") upd({"audio.vol":+e.target.value}); };
   $("#ctrl").onclick = regieClick;
   $("#ctrl").onchange = regieChange;
@@ -677,7 +678,7 @@ admin(){
       <button class="btn small ${au.music===false?"ghost":"alt"}" data-au="music">🎵 Musique : ${au.music===false?"coupée":"activée"}</button>
       <button class="btn small ${au.voice===false?"ghost":"alt"}" data-au="voice">🗣️ Voix : ${au.voice===false?"coupée":"activée"}</button>
       <label class="row" style="margin-top:8px">Volume musique <input id="auvol" type="range" min="0" max="1" step="0.05" value="${au.vol??0.35}" style="flex:1;padding:0"></label>
-      <button class="btn small gold" data-au="replay">🔁 Relire l'écran</button><button class="btn small ghost" data-au="shh">🤫 Faire taire la voix</button>`);
+      <button class="btn small gold" data-au="replay">🔁 Relire l'écran</button><button class="btn small ghost" data-au="shh">🤫 Faire taire la voix</button><button class="btn small alt" data-au="test">🔔 Tester le son</button>`);
     patch("#ctrl", JSON.stringify([step(),st.res,st.winner,st.theme,st.reveal,s.k==="vote"||s.k==="reveal"?plist().map(p=>p.vote):0, plist().length]), ()=>regieCtrl(s,st));
   }
   if(S.rtab==="players"){
@@ -834,6 +835,10 @@ const AU = { ctx:null, master:null, bus:null, mode:null, next:0, i:0, sched:null
 const mtof = m => 440*Math.pow(2,(m-69)/12);
 function auUnlock(){
   try{
+    try{ if(navigator.audioSession) navigator.audioSession.type="playback"; }catch(e){}
+    try{ const sr=8000, n=sr/2, buf=new ArrayBuffer(44+n*2), v=new DataView(buf), w=(o,str)=>[...str].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));
+      w(0,"RIFF"); v.setUint32(4,36+n*2,true); w(8,"WAVEfmt "); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true); v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,"data"); v.setUint32(40,n*2,true);
+      const sil=new Audio(URL.createObjectURL(new Blob([buf],{type:"audio/wav"}))); sil.loop=true; sil.play().catch(()=>{}); AU.sil=sil; }catch(e){}
     AU.ctx = AU.ctx || new (window.AudioContext||window.webkitAudioContext)();
     AU.ctx.resume();
     if(!AU.master){ AU.master=AU.ctx.createGain(); AU.master.gain.value=0; AU.master.connect(AU.ctx.destination); }
@@ -947,6 +952,8 @@ function audioTick(s, st){
   if(S.sayKey!==key){ const first=S.sayKey===undefined; S.sayKey=key; const sp2=sceneSpeech(s,st); if(sp2 && (!first||true)) setTimeout(()=>say(sp2[0],sp2[1]),600); }
   /* voix : popups */
   if(pp && pp.ts!==S.popSaid){ S.popSaid=pp.ts; if(Date.now()-pp.ts<60000) setTimeout(()=>say(`${pp.title}. ${pp.text}`, pp.kind==="grinch"?"grinch":"narr"),400); }
+  if(st.soundTest && st.soundTest!==S.soundTest){ const first=S.soundTest===undefined; S.soundTest=st.soundTest;
+    if(!first || Date.now()-st.soundTest<15000){ const t=AU.ctx.currentTime+0.05; [72,76,79,84].forEach((m,i)=>blip(mtof(m),t+i*0.15,0.8,"triangle",0.3,AU.master)); setTimeout(()=>say("Test du son. Si vous m'entendez, tout fonctionne ! Ho ho ho !","santa"),900); } }
   if(st.hush && st.hush!==S.hush){ S.hush=st.hush; try{ speechSynthesis.cancel(); }catch(e){} AU.speaking=false; setMusic(AU.mode); }
 }
 
