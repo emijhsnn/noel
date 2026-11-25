@@ -141,7 +141,7 @@ body.tab{overflow:hidden}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, doc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, getDocs, runTransaction, serverTimestamp, writeBatch, increment } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, updateDoc, deleteDoc, addDoc, collection, onSnapshot, getDocs, runTransaction, serverTimestamp, writeBatch, increment } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ==================================================================
    🔧 CONFIGURATION FIREBASE : colle ici ton bloc firebaseConfig
@@ -256,7 +256,7 @@ if(!firebaseConfig.projectId){
 } else start();
 
 function start(){
-  db = getFirestore(initializeApp(firebaseConfig));
+  db = initializeFirestore(initializeApp(firebaseConfig), {experimentalForceLongPolling:true});
   const onErr = e => { $("#app").className="wrap"; $("#app").innerHTML = `<div class="card"><h2>❌ Connexion impossible</h2><p>${esc(e.message)}</p><p>Vérifie les règles de Firestore.</p></div>`; S.rendered="error"; };
   onSnapshot(collection(db,"players"), s=>{ S.players={}; s.forEach(d=>S.players[d.id]={id:d.id,...d.data()}); S.loaded.p=1; render(); }, onErr);
   onSnapshot(collection(db,"clues"), s=>{ S.clues=s.docs.map(d=>({id:d.id,...d.data()})); S.loaded.c=1; render(); }, onErr);
@@ -325,7 +325,7 @@ admin: () => `
   <div id="rbody">${RSK[S.rtab]()}</div>`,
 
 /* ---------- TABLETTE ---------- */
-tablet: () => `<div id="scr"></div><div class="corner" id="tcorner"></div>`
+tablet: () => `<div id="scr"></div><div class="corner" id="tcorner"></div>${AU.unlocked?"":`<div id="unlock" class="tpop" style="cursor:pointer"><div class="pop"><h3>🔊</h3><div class="txt">Touchez l'écran pour activer le son</div></div></div>`}`
 };
 
 /* ---------- sous-vues régie ---------- */
@@ -337,6 +337,7 @@ regie: () => `
   <div class="card"><h2>⏱️ Chrono</h2>
     <div class="row">${[30,60,120,180,300].map(s=>`<button class="btn small alt" data-ch="${s}">${s<60?s+" s":(s/60)+" min"}</button>`).join("")}<button class="btn small" data-ch="0">⏹ Stop</button></div>
     <div class="huge" id="rchrono" style="color:var(--ink);text-align:center;font-size:2.2rem;font-weight:900;margin-top:6px">—</div></div>
+  <div class="card"><h2>🔊 Son de la tablette</h2><div id="audioctl"></div></div>
   <div class="card"><h2>😈 Le Grinch s'invite</h2>
     <textarea id="gmsg" placeholder="Un message du Grinch à afficher sur la tablette…" style="min-height:60px"></textarea>
     <button class="btn small alt" id="gsend">Afficher sur la tablette</button><button class="btn small ghost" id="pclose">Fermer la popup en cours</button></div>`,
@@ -388,7 +389,7 @@ admin(){
   };
   RBIND[S.rtab]?.();
 },
-tablet(){}
+tablet(){ const u=$("#unlock"); if(u) u.onclick=()=>{ auUnlock(); u.remove(); S.sayKey=null; S.popSaid=null; UP.tablet(); }; }
 };
 
 const RBIND = {
@@ -398,6 +399,12 @@ regie(){
   $$("[data-ch]").forEach(b=>b.onclick=()=>{ const s=+b.dataset.ch; upd({chrono: s?{endsAt:Date.now()+s*1000}:null}); });
   $("#gsend").onclick = async () => { const t=$("#gmsg").value.trim(); if(!t) return; await upd({popup:{kind:"grinch",title:"😈 Message du Grinch",text:t,ts:Date.now()}}); $("#gmsg").value=""; };
   $("#pclose").onclick = () => upd({popup:null});
+  $("#audioctl").onclick = e => { const b=e.target.closest("button"); if(!b) return; const a=gst().audio||{};
+    if(b.dataset.au==="music") upd({"audio.music":a.music===false});
+    if(b.dataset.au==="voice") upd({"audio.voice":a.voice===false});
+    if(b.dataset.au==="replay") upd({replay:Date.now()});
+    if(b.dataset.au==="shh") upd({hush:Date.now()}); };
+  $("#audioctl").onchange = e => { if(e.target.id==="auvol") upd({"audio.vol":+e.target.value}); };
   $("#ctrl").onclick = regieClick;
   $("#ctrl").onchange = regieChange;
 },
@@ -519,7 +526,8 @@ role: () => `
   <div class="card"><h2>🎭 Mon rôle secret</h2>
     <p class="muted">Vérifie que personne ne regarde ton écran…</p>
     <button class="btn block" id="rshow">👁️ Afficher mon rôle</button>
-    <div id="rbox"></div><div id="rmsgs"></div></div>`,
+    <div id="rbox"></div><div id="rmsgs"></div></div>
+  ${S.acting?"":`<button class="btn ghost block" id="plo">🚪 Se déconnecter</button>`}`,
 clues: () => `<div class="card"><h2>🔎 Mes indices</h2><div id="clist"></div></div>`,
 notes: () => `<div class="card"><h2>📒 Mes suspects</h2><p class="muted">Touche une tête pour la marquer : ❓ suspect → ❌ innocent → ⭐ très suspect.</p><div class="faces" id="marks"></div></div>
   <div class="card"><h2>📝 Mes notes</h2><textarea id="notes" placeholder="Tes soupçons, tes déductions…"></textarea><div class="meta" id="nsave"></div></div>`,
@@ -528,6 +536,7 @@ vote: () => `<div class="card"><h2>🗳️ L'accusation</h2><div id="vbox"></div
 const MARKS = [null,"❓","❌","⭐"];
 const PBIND = {
 role(){
+  const lo=$("#plo"); if(lo) lo.onclick=()=>{ if(window.confirm("Se déconnecter de ce téléphone ?")) logout(); };
   $("#rshow").onclick = () => {
     const box=$("#rbox");
     if(box.innerHTML){ box.innerHTML=""; $("#rshow").textContent="👁️ Afficher mon rôle"; return; }
@@ -663,6 +672,12 @@ admin(){
 
   if(S.rtab==="regie"){
     const lbl=$("#slbl"); if(lbl){ lbl.textContent=s.t; $("#snum").textContent=`Étape ${step()+1} / ${STEPS.length}`; $("#prev").disabled=step()===0; $("#next").disabled=step()===STEPS.length-1; }
+    const au=st.audio||{};
+    patch("#audioctl", JSON.stringify(au), ()=>`<p class="muted">La tablette doit avoir été touchée une fois pour activer le son.</p>
+      <button class="btn small ${au.music===false?"ghost":"alt"}" data-au="music">🎵 Musique : ${au.music===false?"coupée":"activée"}</button>
+      <button class="btn small ${au.voice===false?"ghost":"alt"}" data-au="voice">🗣️ Voix : ${au.voice===false?"coupée":"activée"}</button>
+      <label class="row" style="margin-top:8px">Volume musique <input id="auvol" type="range" min="0" max="1" step="0.05" value="${au.vol??0.35}" style="flex:1;padding:0"></label>
+      <button class="btn small gold" data-au="replay">🔁 Relire l'écran</button><button class="btn small ghost" data-au="shh">🤫 Faire taire la voix</button>`);
     patch("#ctrl", JSON.stringify([step(),st.res,st.winner,st.theme,st.reveal,s.k==="vote"||s.k==="reveal"?plist().map(p=>p.vote):0, plist().length]), ()=>regieCtrl(s,st));
   }
   if(S.rtab==="players"){
@@ -700,6 +715,7 @@ tablet(){
   if(st.confetti && st.confetti!==S.lastConf){ S.lastConf=st.confetti; if(Date.now()-st.confetti<20000) confetti("⭐"); }
   /* compteur de votes animé */
   if(s.k==="vote") bumpVotes();
+  audioTick(s, st);
 }
 };
 
@@ -810,6 +826,128 @@ function tabletScene(s, st){
     return wrap(h);
   }
   return wrap("");
+}
+
+
+/* ================= SON : musique + voix (tablette) ================= */
+const AU = { ctx:null, master:null, bus:null, mode:null, next:0, i:0, sched:null, unlocked:false, files:{}, el:null, speaking:false };
+const mtof = m => 440*Math.pow(2,(m-69)/12);
+function auUnlock(){
+  try{
+    AU.ctx = AU.ctx || new (window.AudioContext||window.webkitAudioContext)();
+    AU.ctx.resume();
+    if(!AU.master){ AU.master=AU.ctx.createGain(); AU.master.gain.value=0; AU.master.connect(AU.ctx.destination); }
+    AU.unlocked = true;
+    if(window.speechSynthesis){ const u=new SpeechSynthesisUtterance(" "); u.volume=0; speechSynthesis.speak(u); }
+    ["noel","grinch"].forEach(k=>{ const a=new Audio(`music/${k}.mp3`); a.loop=true; a.preload="auto";
+      a.addEventListener("canplaythrough",()=>{ AU.files[k]=a; if(AU.mode===k) setMusic(k,true); },{once:true}); a.load(); });
+  }catch(e){ console.warn(e); }
+}
+function blip(freq,t,dur,type,vol,dest,filt){
+  const c=AU.ctx, o=c.createOscillator(), g=c.createGain(); o.type=type; o.frequency.value=freq;
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+0.015); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  let n=o; if(filt){ const f=c.createBiquadFilter(); f.type="lowpass"; f.frequency.value=filt; o.connect(f); n=f; }
+  n.connect(g).connect(dest); o.start(t); o.stop(t+dur+0.05);
+}
+function jingle(t,vol,dest){
+  const c=AU.ctx, len=0.08, b=c.createBuffer(1,c.sampleRate*len,c.sampleRate), d=b.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3);
+  const src=c.createBufferSource(), f=c.createBiquadFilter(), g=c.createGain(); src.buffer=b; f.type="highpass"; f.frequency.value=6000; g.gain.value=vol;
+  src.connect(f).connect(g).connect(dest); src.start(t);
+}
+/* musique de Noël : boîte à musique douce (composition originale) */
+const NOEL = { step:0.24, chords:[[60,64,67,72],[57,60,64,69],[53,57,60,65],[55,59,62,67],[60,64,67,72],[53,57,60,65],[55,59,62,67],[55,59,62,65]], pat:[0,1,2,3,2,1,2,3] };
+/* musique du Grinch : basse menaçante en mineur */
+const GRINCH = { step:0.3, bass:[38,38,41,41,44,44,43,43], top:[74,null,null,80,null,77,null,null] };
+function schedule(){
+  if(!AU.ctx || AU.mode===null) return;
+  const now=AU.ctx.currentTime;
+  if(AU.next<now) AU.next=now+0.05;
+  while(AU.next < now+0.6){
+    const t=AU.next, i=AU.i;
+    if(AU.mode==="noel" && !AU.files.noel){
+      const ch=NOEL.chords[Math.floor(i/8)%NOEL.chords.length], k=i%8, m=ch[NOEL.pat[k]];
+      blip(mtof(m+12),t,0.9,"triangle",0.18,AU.bus); blip(mtof(m+24),t,0.5,"sine",0.05,AU.bus);
+      if(k===0||k===4) blip(mtof(ch[0]-12),t,1.0,"sine",0.22,AU.bus);
+      if(k%2===1) jingle(t,0.05,AU.bus);
+      AU.next+=NOEL.step;
+    } else if(AU.mode==="grinch" && !AU.files.grinch){
+      const k=i%8, bar=Math.floor(i/8);
+      blip(mtof(GRINCH.bass[k]),t,0.28,"sawtooth",0.22,AU.bus,500);
+      const tp=GRINCH.top[k]; if(tp && bar%2===0) blip(mtof(tp-(bar%4===2?1:0)),t,0.5,"square",0.04,AU.bus,1800);
+      if(k===0) blip(mtof(26),t,1.2,"sine",0.25,AU.bus);
+      AU.next+=GRINCH.step;
+    } else { AU.next+=0.25; }
+    AU.i++;
+  }
+}
+function setMusic(mode, force){
+  const a=gst().audio||{}, on=a.music!==false && AU.unlocked, vol=a.vol??0.35;
+  const want = on ? mode : null;
+  if(AU.master) AU.master.gain.setTargetAtTime(AU.speaking?vol*0.3:vol, AU.ctx.currentTime, 0.3);
+  Object.entries(AU.files).forEach(([k,el])=>{ el.volume=Math.min(1,AU.speaking?vol*0.3:vol); if(k!==want){ el.pause(); } });
+  if(want===AU.mode && !force) return;
+  AU.mode=want; AU.i=0;
+  if(!AU.ctx) return;
+  if(AU.bus){ const old=AU.bus; old.gain.setTargetAtTime(0.0001,AU.ctx.currentTime,0.4); setTimeout(()=>old.disconnect(),2500); }
+  AU.bus=AU.ctx.createGain(); AU.bus.gain.value=0.0001; AU.bus.connect(AU.master); AU.bus.gain.setTargetAtTime(1,AU.ctx.currentTime,0.6);
+  AU.next=AU.ctx.currentTime+0.1;
+  if(want && AU.files[want]){ const el=AU.files[want]; el.currentTime=0; el.play().catch(()=>{}); }
+  if(!AU.sched) AU.sched=setInterval(schedule,150);
+}
+/* voix */
+let VOICES=[];
+function loadVoices(){ if(window.speechSynthesis) VOICES=speechSynthesis.getVoices().filter(v=>/^fr/i.test(v.lang)); }
+if(window.speechSynthesis){ loadVoices(); speechSynthesis.onvoiceschanged=loadVoices; }
+function pickVoice(kind){
+  const pref = kind==="grinch" ? ["Thomas","Daniel","Google français","Nicolas"] : kind==="santa" ? ["Thomas","Nicolas","Google français","Daniel"] : ["Amélie","Audrey","Marie","Google français","Thomas"];
+  for(const n of pref){ const v=VOICES.find(v=>v.name.includes(n)); if(v) return v; }
+  return VOICES[0]||null;
+}
+const cleanTxt = t => String(t||"").replace(/<[^>]+>/g," ").replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu,"").replace(/[«»]/g,"").replace(/\s+/g," ").trim();
+function say(text, kind="narr"){
+  const a=gst().audio||{}; if(a.voice===false || !AU.unlocked || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const parts=cleanTxt(text).match(/[^.!?…]+[.!?…]*/g)||[]; if(!parts.length) return;
+  parts.forEach((p,i)=>{ const u=new SpeechSynthesisUtterance(p.trim()); u.lang="fr-FR"; const v=pickVoice(kind); if(v) u.voice=v;
+    if(kind==="grinch"){ u.pitch=0.2; u.rate=0.82; } else if(kind==="santa"){ u.pitch=0.55; u.rate=0.9; } else { u.pitch=1; u.rate=0.98; }
+    if(i===0) u.onstart=()=>{ AU.speaking=true; setMusic(AU.mode); };
+    if(i===parts.length-1){ u.onend=u.onerror=()=>{ AU.speaking=false; setMusic(AU.mode); }; }
+    speechSynthesis.speak(u); });
+}
+function sceneSpeech(s, st){
+  if(s.k==="intro") return ["Message urgent du Pôle Nord. Chère famille, mes lutins ont intercepté un message du Grinch. Cette année, il a décidé de gâcher votre Noël. Pour ça, il a infiltré deux espions parmi vous. Ils sont assis à cette table. Ils rient avec vous. Ils mangent vos toasts. Si vous ne les démasquez pas avant le dessert, je serai obligé de rayer votre maison de ma tournée. Pour vous aider, mes lutins ont caché des indices dans une série d'épreuves. Gagnez-les, réfléchissez bien… et ne faites confiance à personne. Signé : le Père Noël. Ho ho ho !","santa"];
+  if(s.k==="roles") return ["Regardez vos téléphones… votre rôle vous attend.","narr"];
+  if(s.k==="grinch") return [GAMES[s.g].grinch+" Hé hé hé !","grinch"];
+  if(s.k==="game"){ const g=GAMES[s.g], r=st.res?.[s.g];
+    if(r==="riddle") return ["L'énigme du Grinch ! "+g.riddle.q.replace(/\n+/g," . ").replace(/–/g,", "),"grinch"];
+    if(!r) return [`Épreuve ${s.g+1} : ${g.name}. ${g.rules}`+(st.theme&&g.theme?` Le thème est : ${st.theme}.`:""),"narr"];
+    return null; }
+  if(s.k==="vote") return ["L'heure du verdict a sonné. Sur vos téléphones, désignez les deux espions. Votre choix est définitif.","santa"];
+  if(s.k==="reveal"){ const rv=st.reveal||0, acc=accused().map(nameOf), sp=spies(), found=sp.filter(x=>accused().includes(x.id)).length;
+    if(rv===0) return [`La famille accuse… ${acc.join(" et ")}.`,"narr"];
+    if(rv===1) return ["Mais avez-vous vu juste ?","narr"];
+    if(rv===2) return [`Le premier espion du Grinch était… ${sp[0]?.name||""} !`,"narr"];
+    if(rv===3) return [`Et le deuxième… ${sp[1]?.name||""} !`,"narr"];
+    if(rv>=4) return found===2?["Noël est sauvé ! Les espions sont démasqués. Le Père Noël passera bien chez vous cette nuit. Ho ho ho !","santa"]
+      : found===1?["Sauvés de justesse ! Un espion démasqué, mais l'autre vous a bien eus.","santa"]
+      : ["Le Grinch a gagné ! Mes espions vous ont roulés dans la farine. Mouahahaha !","grinch"]; }
+  return null;
+}
+function audioTick(s, st){
+  if(!AU.unlocked) return;
+  /* musique */
+  const pp=st.popup, grinchPop = pp && pp.kind==="grinch" && Date.now()-pp.ts<12000;
+  const sp=spies(), found=sp.filter(x=>accused().includes(x.id)).length;
+  const gmode = s.k==="grinch" || (s.k==="game" && st.res?.[s.g]==="riddle") || grinchPop || (s.k==="reveal" && (st.reveal||0)>=4 && found===0);
+  setMusic(gmode?"grinch":"noel");
+  if(grinchPop) setTimeout(()=>audioTick(STEPS[step()],gst()),12500);
+  /* voix : scène */
+  const key=JSON.stringify([step(), st.res?.[s.g], st.theme, st.reveal, st.replay]);
+  if(S.sayKey!==key){ const first=S.sayKey===undefined; S.sayKey=key; const sp2=sceneSpeech(s,st); if(sp2 && (!first||true)) setTimeout(()=>say(sp2[0],sp2[1]),600); }
+  /* voix : popups */
+  if(pp && pp.ts!==S.popSaid){ S.popSaid=pp.ts; if(Date.now()-pp.ts<60000) setTimeout(()=>say(`${pp.title}. ${pp.text}`, pp.kind==="grinch"?"grinch":"narr"),400); }
+  if(st.hush && st.hush!==S.hush){ S.hush=st.hush; try{ speechSynthesis.cancel(); }catch(e){} AU.speaking=false; setMusic(AU.mode); }
 }
 
 /* ---------- animations ---------- */
